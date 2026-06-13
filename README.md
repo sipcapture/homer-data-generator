@@ -32,21 +32,23 @@ make help           # all targets
 ## Quick start (Homer-compatible)
 
 ```bash
+make build
+
 # 1. Create empty catalog + table schema
-go run . init-catalog \
+./bin/homer-data-generator init-catalog \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet
 
 # 2. Generate ~80 GiB / 14 days (stop homer-core while running)
 #    Default dates: (today UTC − 14 days) … (yesterday UTC) — today is NOT included.
-go run . generate \
+./bin/homer-data-generator generate \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet \
   --target-gb 80 \
   --days 14
 
 # 3. Optional: merge small files (like CompactionService)
-go run . compact \
+./bin/homer-data-generator compact \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet
 
@@ -56,7 +58,8 @@ go run . compact \
 Smoke test (~50 MiB):
 
 ```bash
-go run . generate \
+make build
+./bin/homer-data-generator generate \
   --catalog /tmp/homer_catalog.sqlite \
   --data-path /tmp/parquet \
   --target-gb 0.05 --days 2 --files-per-day 4
@@ -113,7 +116,7 @@ Example: if today is `2026-06-13`, partitions are `2026-05-30` … `2026-06-12`.
 To include today in a 14-day window:
 
 ```bash
-go run . generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
+./bin/homer-data-generator generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
 ```
 
 ## Do I need `register`?

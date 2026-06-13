@@ -188,23 +188,23 @@ Usage:
   homer-data-generator register          --catalog PATH --data-path PATH  (legacy raw parquet only)
 
 Homer-compatible flow (ducklake-{uuid}.parquet + catalog.sqlite):
-  go run . init-catalog \
+  ./bin/homer-data-generator init-catalog \
     --catalog /data/homer/homer_catalog.sqlite \
     --data-path /data/homer/parquet
 
-  go run . generate \
+  ./bin/homer-data-generator generate \
     --catalog /data/homer/homer_catalog.sqlite \
     --data-path /data/homer/parquet \
     --target-gb 80 --days 14
 
   # optional: merge small files (like CompactionService)
-  go run . compact --catalog /data/homer/homer_catalog.sqlite --data-path /data/homer/parquet
+  ./bin/homer-data-generator compact --catalog /data/homer/homer_catalog.sqlite --data-path /data/homer/parquet
 
 Point homer.json storage.ducklake.catalog_path + data_path at the same paths.
 Stop homer-core while generating. Start homer-core — search works immediately.
 
 Smoke (~50 MiB):
-  go run . generate --catalog /tmp/cat.sqlite --data-path /tmp/parquet \
+  ./bin/homer-data-generator generate --catalog /tmp/cat.sqlite --data-path /tmp/parquet \
     --target-gb 0.05 --days 2 --files-per-day 4
 
 `)

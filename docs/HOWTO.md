@@ -18,7 +18,7 @@ make build
 ./bin/homer-data-generator -v
 ```
 
-You need **Go 1.22+** and **CGO** (DuckDB bindings).
+You need **Go 1.22+** and **CGO** (DuckDB bindings). Run `make build` before using `./bin/homer-data-generator`.
 
 Disk: plan at least **`target-gb + 20%`** free space under `--data-path` (default profile ≈ **80 GiB**).
 
@@ -29,11 +29,13 @@ Disk: plan at least **`target-gb + 20%`** free space under `--data-path` (defaul
 Verifies extensions, catalog, and `ducklake-*.parquet` output:
 
 ```bash
-go run . init-catalog \
+make build
+
+./bin/homer-data-generator init-catalog \
   --catalog /tmp/homer_catalog.sqlite \
   --data-path /tmp/parquet
 
-go run . generate \
+./bin/homer-data-generator generate \
   --catalog /tmp/homer_catalog.sqlite \
   --data-path /tmp/parquet \
   --target-gb 0.05 \
@@ -64,11 +66,11 @@ PARQUET=$DATA/parquet
 # Stop homer-core if it uses the same paths
 sudo systemctl stop homer-core   # or docker compose stop homer
 
-go run . init-catalog \
+./bin/homer-data-generator init-catalog \
   --catalog "$CATALOG" \
   --data-path "$PARQUET"
 
-go run . generate \
+./bin/homer-data-generator generate \
   --catalog "$CATALOG" \
   --data-path "$PARQUET" \
   --target-gb 80 \
@@ -139,7 +141,7 @@ Adjust `from`/`to` to match partition range: `--start-date` through `--start-dat
 After generate, optionally merge small adjacent files:
 
 ```bash
-go run . compact \
+./bin/homer-data-generator compact \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet \
   --max-compacted-files 100
@@ -148,7 +150,7 @@ go run . compact \
 Or compact at end of generate:
 
 ```bash
-go run . generate ... --compact
+./bin/homer-data-generator generate ... --compact
 ```
 
 Use this to test compaction OOM separately from search OOM.
@@ -160,7 +162,7 @@ Use this to test compaction OOM separately from search OOM.
 More seed rows → heavier `LIKE '%call_id%'` scans:
 
 ```bash
-go run . generate \
+./bin/homer-data-generator generate \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet \
   --target-gb 10 --days 14 \
@@ -190,10 +192,10 @@ Only if you generated **without** `--catalog`:
 
 ```bash
 # Generates data_00001.parquet — NOT Homer-ready alone
-go run . generate --output ./parquet --target-gb 1 --days 3
+./bin/homer-data-generator generate --output ./parquet --target-gb 1 --days 3
 
 # Import into catalog (homer-core stopped)
-go run . register \
+./bin/homer-data-generator register \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path ./parquet
 ```
@@ -276,17 +278,17 @@ make version
 # homer-data-generator -v
 
 # Setup
-go run . init-catalog --catalog PATH --data-path PATH
+./bin/homer-data-generator init-catalog --catalog PATH --data-path PATH
 
 # Generate (Homer-ready; dates: today−days … yesterday UTC)
-go run . generate --catalog PATH --data-path PATH --target-gb 80 --days 14
+./bin/homer-data-generator generate --catalog PATH --data-path PATH --target-gb 80 --days 14
 
 # Include today in the window
-go run . generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
+./bin/homer-data-generator generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
 
 # Compaction
-go run . compact --catalog PATH --data-path PATH
+./bin/homer-data-generator compact --catalog PATH --data-path PATH
 
 # Help
-go run . help
+./bin/homer-data-generator help
 ```
