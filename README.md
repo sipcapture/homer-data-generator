@@ -14,6 +14,8 @@ Writes real DuckLake artifacts — the same layout Homer produces after flush/co
 
 **`--catalog` mode** (recommended): `INSERT INTO` DuckLake → `ducklake-{uuid}.parquet` on disk **and** rows registered in `catalog.sqlite` automatically. No separate `register` step.
 
+**Docs:** [Architecture](docs/ARCHITECTURE.md) · [HOWTO](docs/HOWTO.md)
+
 ## Requirements
 
 - Go 1.22+, CGO
