@@ -217,7 +217,7 @@ homer-core ducklake compaction --compaction-recover -c homer.json
 | Search returns 0 rows | UI time range must cover `--start-date` … `--start-date + days − 1` (UTC); today is excluded by default |
 | Search returns 0 for seed Call-ID | Increase `--seed-call-ratio` or verify `--seed-call-id` |
 | `No files found` in UI but parquet exists | You used raw mode without `register` — use `--catalog` or `register` |
-| OOM during **generate** | Lower `--target-gb`, `--rows-per-file`, or `--files-per-day`; ensure free RAM |
+| OOM during **generate** | DuckDB had no memory cap (fixed: default `8GB` + spill). Need **16GB+ host RAM** for `--target-gb 80`, or lower `--target-gb` / `--rows-per-file`. Install `sqlite3` for inline-table GC. |
 | OOM during **Homer search** | Tune `storage.ducklake.tuning` (`memory_limit`, `temp_directory`) in homer.json |
 
 ### Verify catalog vs disk

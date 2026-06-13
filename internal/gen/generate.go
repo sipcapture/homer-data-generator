@@ -30,6 +30,10 @@ type Options struct {
 	Table         string
 	FlushEachBatch bool // CALL ducklake_flush_inlined_data after each insert batch
 	CompactAtEnd   bool // run merge_adjacent_files when done
+	MemoryLimit    string
+	TempDirectory  string
+	Threads        int
+	ReopenEvery    int // close+reopen DuckDB every N batches (0 = once per day)
 }
 
 // Result summarizes a generate run.
@@ -67,23 +71,33 @@ func Generate(opts Options) (Result, error) {
 
 func generateDuckLake(opts Options, payloadBytes int) (Result, error) {
 	lake, err := openLake(LakeConfig{
-		CatalogPath: opts.CatalogPath,
-		DataPath:    opts.OutputDir,
-		LakeName:    opts.LakeName,
-		Table:       opts.Table,
+		CatalogPath:   opts.CatalogPath,
+		DataPath:      opts.OutputDir,
+		LakeName:      opts.LakeName,
+		Table:         opts.Table,
+		MemoryLimit:   opts.MemoryLimit,
+		TempDirectory: opts.TempDirectory,
+		Threads:       opts.Threads,
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	defer lake.Close()
 
-	db := lake.db
 	staging := "staging_hep_proto_1_call"
-	if _, err := db.Exec(fmt.Sprintf("CREATE TEMP TABLE %s (%s)", staging, schema.CallCreateSQL)); err != nil {
+	if err := lake.ensureStaging(staging); err != nil {
 		return Result{}, fmt.Errorf("create staging: %w", err)
 	}
 
-	return runBatches(db, lake, opts, payloadBytes, staging, true)
+	br := &batchRunner{
+		db:           lake.db,
+		lake:         lake,
+		opts:         opts,
+		payloadBytes: payloadBytes,
+		staging:      staging,
+		ducklakeMode: true,
+	}
+	return br.run()
 }
 
 func generateRawParquet(opts Options, payloadBytes int) (Result, error) {
@@ -115,70 +129,104 @@ func generateRawParquet(opts Options, payloadBytes int) (Result, error) {
 	fmt.Println("WARNING: raw parquet mode — files are data_NNNNN.parquet, not ducklake-{uuid}.")
 	fmt.Println("         For Homer use: generate --catalog ... --data-path ...")
 
-	return runBatches(db, nil, opts, payloadBytes, staging, false)
+	br := &batchRunner{
+		db:           db,
+		opts:         opts,
+		payloadBytes: payloadBytes,
+		staging:      staging,
+	}
+	return br.run()
 }
 
-func runBatches(db *sql.DB, lake *Lake, opts Options, payloadBytes int, staging string, ducklakeMode bool) (Result, error) {
+type batchRunner struct {
+	db           *sql.DB
+	lake         *Lake
+	opts         Options
+	payloadBytes int
+	staging      string
+	ducklakeMode bool
+}
+
+func (br *batchRunner) reopenIfNeeded(fileIdx, totalFiles int) error {
+	if br.lake == nil {
+		return nil
+	}
+	every := br.opts.ReopenEvery
+	if every <= 0 {
+		every = br.opts.FilesPerDay
+	}
+	if fileIdx%every != 0 || fileIdx >= totalFiles {
+		return nil
+	}
+	fmt.Printf("  reopening DuckDB session after batch %d/%d (release memory)...\n", fileIdx, totalFiles)
+	if err := br.lake.reopen(); err != nil {
+		return err
+	}
+	br.db = br.lake.db
+	return br.lake.ensureStaging(br.staging)
+}
+
+func (br *batchRunner) run() (Result, error) {
 	methods := []string{"INVITE", "ACK", "BYE", "CANCEL", "PRACK", "UPDATE", "INFO"}
 	respCodes := []string{"", "", "", "100", "180", "200", "486", "487"}
 
-	totalFiles := opts.Days * opts.FilesPerDay
+	totalFiles := br.opts.Days * br.opts.FilesPerDay
 	var res Result
-	res.OutputDir = opts.OutputDir
-	res.CatalogPath = opts.CatalogPath
+	res.OutputDir = br.opts.OutputDir
+	res.CatalogPath = br.opts.CatalogPath
 
 	mode := "raw parquet"
-	if ducklakeMode {
+	if br.ducklakeMode {
 		mode = "DuckLake (catalog + ducklake-*.parquet)"
 	}
 	fmt.Printf("Generating ~%.1f GiB of %s over %d days [%s]\n",
-		opts.TargetGB, opts.Table, opts.Days, mode)
-	fmt.Printf("Data path: %s\n", opts.OutputDir)
-	if ducklakeMode {
-		fmt.Printf("Catalog:   %s\n", opts.CatalogPath)
+		br.opts.TargetGB, br.opts.Table, br.opts.Days, mode)
+	fmt.Printf("Data path: %s\n", br.opts.OutputDir)
+	if br.ducklakeMode {
+		fmt.Printf("Catalog:   %s\n", br.opts.CatalogPath)
 	}
 
 	fileIdx := 0
-	for day := 0; day < opts.Days; day++ {
-		dateStr := opts.StartDate.AddDate(0, 0, day).Format("2006-01-02")
-		partDir := filepath.Join(opts.OutputDir, "main", opts.Table, "date="+dateStr)
-		if !ducklakeMode {
+	for day := 0; day < br.opts.Days; day++ {
+		dateStr := br.opts.StartDate.AddDate(0, 0, day).Format("2006-01-02")
+		partDir := filepath.Join(br.opts.OutputDir, "main", br.opts.Table, "date="+dateStr)
+		if !br.ducklakeMode {
 			if err := os.MkdirAll(partDir, 0o755); err != nil {
 				return res, err
 			}
 		}
 
-		for f := 0; f < opts.FilesPerDay; f++ {
+		for f := 0; f < br.opts.FilesPerDay; f++ {
 			fileIdx++
-			seedOffset := fileIdx * opts.RowsPerFile
+			seedOffset := fileIdx * br.opts.RowsPerFile
 
-			insertSQL := buildInsertSQL(staging, insertParams{
-				rows:          opts.RowsPerFile,
+			insertSQL := buildInsertSQL(br.staging, insertParams{
+				rows:          br.opts.RowsPerFile,
 				dateStr:       dateStr,
 				dayOffset:     day,
 				fileOffset:    seedOffset,
-				payloadBytes:  payloadBytes,
-				seedCallID:    opts.SeedCallID,
-				seedCallRatio: opts.SeedCallRatio,
+				payloadBytes:  br.payloadBytes,
+				seedCallID:    br.opts.SeedCallID,
+				seedCallRatio: br.opts.SeedCallRatio,
 				methods:       methods,
 				respCodes:     respCodes,
 			})
 
-			if _, err := db.Exec(fmt.Sprintf("DELETE FROM %s", staging)); err != nil {
+			if _, err := br.db.Exec(fmt.Sprintf("DELETE FROM %s", br.staging)); err != nil {
 				return res, fmt.Errorf("clear staging: %w", err)
 			}
-			if _, err := db.Exec(insertSQL); err != nil {
+			if _, err := br.db.Exec(insertSQL); err != nil {
 				return res, fmt.Errorf("fill staging day=%s batch=%d: %w", dateStr, f+1, err)
 			}
 
-			if ducklakeMode {
-				n, err := lake.InsertStaging(staging)
+			if br.ducklakeMode {
+				n, err := br.lake.InsertStaging(br.staging)
 				if err != nil {
 					return res, fmt.Errorf("insert into ducklake day=%s batch=%d: %w", dateStr, f+1, err)
 				}
 				res.RowsWritten += n
-				if opts.FlushEachBatch {
-					if err := lake.FlushInlined(); err != nil {
+				if br.opts.FlushEachBatch {
+					if err := br.lake.FlushInlined(); err != nil {
 						return res, fmt.Errorf("flush_inlined_data: %w", err)
 					}
 				}
@@ -186,9 +234,9 @@ func runBatches(db *sql.DB, lake *Lake, opts Options, payloadBytes int, staging 
 				outPath := filepath.Join(partDir, fmt.Sprintf("data_%05d.parquet", fileIdx))
 				copySQL := fmt.Sprintf(
 					`COPY (SELECT * FROM %s) TO '%s' (FORMAT PARQUET, COMPRESSION SNAPPY)`,
-					staging, escapeSQLPath(outPath),
+					br.staging, escapeSQLPath(outPath),
 				)
-				if _, err := db.Exec(copySQL); err != nil {
+				if _, err := br.db.Exec(copySQL); err != nil {
 					return res, fmt.Errorf("copy parquet: %w", err)
 				}
 				fi, err := os.Stat(outPath)
@@ -196,14 +244,18 @@ func runBatches(db *sql.DB, lake *Lake, opts Options, payloadBytes int, staging 
 					return res, err
 				}
 				res.FilesWritten++
-				res.RowsWritten += int64(opts.RowsPerFile)
+				res.RowsWritten += int64(br.opts.RowsPerFile)
 				res.BytesWritten += fi.Size()
+			}
+
+			if err := br.reopenIfNeeded(fileIdx, totalFiles); err != nil {
+				return res, fmt.Errorf("reopen duckdb: %w", err)
 			}
 
 			if fileIdx%10 == 0 || fileIdx == totalFiles {
 				pct := float64(fileIdx) / float64(totalFiles) * 100
-				if ducklakeMode {
-					files, bytes, _ := lake.ParquetStats()
+				if br.ducklakeMode {
+					files, bytes, _ := br.lake.ParquetStats()
 					fmt.Printf("  [%5.1f%%] %d/%d batches  %d ducklake files  %.2f GiB\n",
 						pct, fileIdx, totalFiles, files, float64(bytes)/(1<<30))
 				} else {
@@ -214,33 +266,33 @@ func runBatches(db *sql.DB, lake *Lake, opts Options, payloadBytes int, staging 
 		}
 	}
 
-	if ducklakeMode {
-		if !opts.FlushEachBatch {
-			if err := lake.FlushInlined(); err != nil {
+	if br.ducklakeMode {
+		if !br.opts.FlushEachBatch {
+			if err := br.lake.FlushInlined(); err != nil {
 				return res, fmt.Errorf("final flush_inlined_data: %w", err)
 			}
 		}
-		if opts.CompactAtEnd {
+		if br.opts.CompactAtEnd {
 			fmt.Println("Running ducklake_merge_adjacent_files...")
-			if err := lake.MergeAdjacent(100); err != nil {
+			if err := br.lake.MergeAdjacent(100); err != nil {
 				return res, fmt.Errorf("merge_adjacent_files: %w", err)
 			}
 		}
-		files, bytes, err := lake.ParquetStats()
+		files, bytes, err := br.lake.ParquetStats()
 		if err != nil {
 			return res, err
 		}
 		res.FilesWritten = files
 		res.BytesWritten = bytes
 		if res.RowsWritten == 0 {
-			res.RowsWritten, _ = lake.RowCount()
+			res.RowsWritten, _ = br.lake.RowCount()
 		}
 	}
 
 	fmt.Printf("Done: %d parquet files, %d rows, %.2f GiB\n",
 		res.FilesWritten, res.RowsWritten, float64(res.BytesWritten)/(1<<30))
-	if ducklakeMode {
-		fmt.Printf("Catalog updated: %s\n", opts.CatalogPath)
+	if br.ducklakeMode {
+		fmt.Printf("Catalog updated: %s\n", br.opts.CatalogPath)
 	}
 	return res, nil
 }

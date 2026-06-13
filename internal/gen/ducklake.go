@@ -14,10 +14,13 @@ import (
 
 // LakeConfig opens or creates a DuckLake catalog + data path.
 type LakeConfig struct {
-	CatalogPath string
-	DataPath    string
-	LakeName    string
-	Table       string
+	CatalogPath   string
+	DataPath      string
+	LakeName      string
+	Table         string
+	MemoryLimit   string // DuckDB SET memory_limit (empty = 8GB)
+	TempDirectory string // DuckDB spill dir (empty = <catalog_dir>/.duckdb_spill)
+	Threads       int    // DuckDB threads (0 = 4)
 }
 
 // Lake is an attached DuckLake session (catalog + parquet root).
@@ -56,9 +59,31 @@ func openLake(cfg LakeConfig) (*Lake, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open duckdb: %w", err)
 	}
+
+	threads := cfg.Threads
+	if threads <= 0 {
+		threads = 4
+	}
+	memLimit := strings.TrimSpace(cfg.MemoryLimit)
+	if memLimit == "" {
+		memLimit = "8GB"
+	}
+	tempDir := strings.TrimSpace(cfg.TempDirectory)
+	if tempDir == "" {
+		tempDir = defaultSpillDirectory(cfg.CatalogPath)
+	}
+	if err := applyDuckDBTuning(db, threads, memLimit, tempDir); err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	if n, err := gcOrphanInlineTables(cfg.CatalogPath); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: inline table GC failed (non-fatal): %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("GC: dropped %d empty ducklake_inlined_data_* tables\n", n)
+	}
+
 	for _, stmt := range []string{
-		"SET threads TO 4",
-		"SET preserve_insertion_order = false",
 		"LOAD ducklake",
 		"LOAD sqlite",
 	} {
@@ -103,6 +128,31 @@ func (c LakeConfig) withDefaults() LakeConfig {
 
 func (l *Lake) Close() error {
 	return l.db.Close()
+}
+
+// reopen closes DuckDB, GCs orphan inline tables in the catalog, and opens a
+// fresh session. Resets DuckDB RSS growth during long generate runs.
+func (l *Lake) reopen() error {
+	cfg := l.cfg
+	if err := l.Close(); err != nil {
+		return err
+	}
+	if n, err := gcOrphanInlineTables(cfg.CatalogPath); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: inline table GC failed (non-fatal): %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("GC: dropped %d empty ducklake_inlined_data_* tables\n", n)
+	}
+	newLake, err := openLake(cfg)
+	if err != nil {
+		return err
+	}
+	*l = *newLake
+	return nil
+}
+
+func (l *Lake) ensureStaging(staging string) error {
+	_, err := l.db.Exec(fmt.Sprintf("CREATE TEMP TABLE IF NOT EXISTS %s (%s)", staging, schema.CallCreateSQL))
+	return err
 }
 
 func (l *Lake) ensureCallTable() error {

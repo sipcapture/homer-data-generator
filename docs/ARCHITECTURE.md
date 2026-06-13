@@ -171,8 +171,11 @@ homer-core --install-extensions
 
 Runtime settings applied on open:
 
-- `threads = 4`
+- `threads = 4` (override: `--threads`)
+- `memory_limit = 8GB` (override: `--memory-limit`) — without this DuckDB claims ~80% of host RAM
+- `temp_directory = <catalog_dir>/.duckdb_spill` (override: `--temp-directory`) — disk spill when batches exceed memory_limit
 - `preserve_insertion_order = false` (lower peak memory during large inserts)
+- Periodic DuckDB reconnect (default: once per day / `--files-per-day`) + sqlite GC of empty `ducklake_inlined_data_*` tables to cap RSS on long runs
 
 ## Modes compared
 

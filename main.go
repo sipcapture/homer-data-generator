@@ -63,6 +63,10 @@ func runGenerate(args []string) int {
 	seedRatio := fs.Float64("seed-call-ratio", 0.001, "fraction of rows with seed-call-id")
 	compactEnd := fs.Bool("compact", false, "run ducklake_merge_adjacent_files after generate")
 	noFlush := fs.Bool("no-flush-each-batch", false, "skip ducklake_flush_inlined_data per batch")
+	memoryLimit := fs.String("memory-limit", "", "DuckDB memory_limit (default: 8GB)")
+	tempDir := fs.String("temp-directory", "", "DuckDB spill dir (default: <catalog_dir>/.duckdb_spill)")
+	threads := fs.Int("threads", 0, "DuckDB threads (default: 4)")
+	reopenEvery := fs.Int("reopen-every", 0, "close/reopen DuckDB every N batches (0 = once per day)")
 	table := fs.String("table", schema.CallTable, "table name")
 	_ = fs.Parse(args)
 
@@ -98,6 +102,10 @@ func runGenerate(args []string) int {
 		Table:          *table,
 		FlushEachBatch: !*noFlush,
 		CompactAtEnd:   *compactEnd,
+		MemoryLimit:    *memoryLimit,
+		TempDirectory:  *tempDir,
+		Threads:        *threads,
+		ReopenEvery:    *reopenEvery,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "generate failed: %v\n", err)
