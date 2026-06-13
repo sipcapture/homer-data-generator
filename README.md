@@ -18,6 +18,7 @@ Writes real DuckLake artifacts — the same layout Homer produces after flush/co
 
 ```bash
 make build          # bin/homer-data-generator
+make version        # or: ./bin/homer-data-generator -v
 make smoke          # quick ~50 MiB test in /tmp
 make help           # all targets
 ```
@@ -37,6 +38,7 @@ go run . init-catalog \
   --data-path /data/homer/parquet
 
 # 2. Generate ~80 GiB / 14 days (stop homer-core while running)
+#    Default dates: (today UTC − 14 days) … (yesterday UTC) — today is NOT included.
 go run . generate \
   --catalog /data/homer/homer_catalog.sqlite \
   --data-path /data/homer/parquet \
@@ -78,6 +80,7 @@ Search repro: default **0.1%** of rows use Call-ID
 
 | Command | Purpose |
 |---------|---------|
+| `-v`, `--version` | Print version, build info, and exit |
 | `init-catalog` | Create `catalog.sqlite` + `hep_proto_1_call` (partitioned by `date`) |
 | `generate --catalog …` | Insert batches → `ducklake-*.parquet` + catalog |
 | `compact` | `flush_inlined_data` + `merge_adjacent_files` |
@@ -90,11 +93,28 @@ Search repro: default **0.1%** of rows use Call-ID
 | `--catalog` | — | **Required for Homer.** DuckLake sqlite path |
 | `--data-path` | `/data/homer/parquet` | Parquet root |
 | `--target-gb` | `80` | Approximate total size |
-| `--days` | `14` | `date=` partitions |
+| `--days` | `14` | Number of `date=` partitions (see below) |
+| `--start-date` | auto | First partition `YYYY-MM-DD` (default: today UTC − `--days`) |
 | `--rows-per-file` | `25000` | Rows per insert batch |
 | `--files-per-day` | `32` | Batches per day |
 | `--compact` | `false` | Run merge after generate |
 | `--seed-call-id` | (OOM repro ID) | Fixed Call-ID for search tests |
+
+### Date partitions (`--days`)
+
+All dates are **UTC** calendar days. With `--days 14` and no `--start-date`:
+
+- **start** = today UTC (midnight) minus 14 days  
+- **partitions** = `start`, `start+1`, …, `start+13` (14 days total)  
+- **today is excluded** — the last partition is yesterday
+
+Example: if today is `2026-06-13`, partitions are `2026-05-30` … `2026-06-12`.
+
+To include today in a 14-day window:
+
+```bash
+go run . generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
+```
 
 ## Do I need `register`?
 

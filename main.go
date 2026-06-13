@@ -11,6 +11,14 @@ import (
 )
 
 func main() {
+	if len(os.Args) >= 2 {
+		switch os.Args[1] {
+		case "-v", "-version", "--version":
+			PrintVersion()
+			return
+		}
+	}
+
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(1)
@@ -173,10 +181,11 @@ func usage() {
 	fmt.Fprintf(os.Stderr, `homer-data-generator — synthetic DuckLake data for Homer OOM testing
 
 Usage:
-  homer-data-generator init-catalog  --catalog PATH --data-path PATH
-  homer-data-generator generate      --catalog PATH --data-path PATH [flags]
-  homer-data-generator compact       --catalog PATH --data-path PATH
-  homer-data-generator register      --catalog PATH --data-path PATH  (legacy raw parquet only)
+  homer-data-generator -v, --version     Show version and exit
+  homer-data-generator init-catalog      --catalog PATH --data-path PATH
+  homer-data-generator generate          --catalog PATH --data-path PATH [flags]
+  homer-data-generator compact           --catalog PATH --data-path PATH
+  homer-data-generator register          --catalog PATH --data-path PATH  (legacy raw parquet only)
 
 Homer-compatible flow (ducklake-{uuid}.parquet + catalog.sqlite):
   go run . init-catalog \

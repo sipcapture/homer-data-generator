@@ -14,7 +14,8 @@ cd homer-data-generator
 homer-core --install-extensions
 
 # Build optional
-go build -o homer-data-generator .
+make build
+./bin/homer-data-generator -v
 ```
 
 You need **Go 1.22+** and **CGO** (DuckDB bindings).
@@ -76,6 +77,10 @@ go run . generate \
   --files-per-day 32
 ```
 
+**Date range (default):** UTC partitions from **(today − 14 days)** through **yesterday** — 14 days, **today not included**.  
+Example on `2026-06-13`: `date=2026-05-30` … `date=2026-06-12`.  
+Override with `--start-date YYYY-MM-DD` (first partition).
+
 Expected: **448** insert batches (14 × 32), hundreds of `ducklake-*.parquet` files, catalog row count ≈ 11.2M rows.
 
 ---
@@ -109,7 +114,7 @@ sudo systemctl start homer-core
 ### UI search repro
 
 1. Open Homer dashboard.
-2. Time range: **14 days** (covering generated `date=` partitions).
+2. Time range: **14 days** covering generated partitions (default generate ends **yesterday** UTC).
 3. Search field **Call-ID**: `9b9558fa657d11f1aba1000c29796214@91.102.10.105`  
    (default seed ID — 0.1% of rows match).
 4. Watch homer-core logs for query duration / OOM.
@@ -125,7 +130,7 @@ curl -s -b cookies.txt -X POST http://localhost:8080/api/v4/transactions/search 
   }'
 ```
 
-Adjust `from`/`to` to match your `--start-date` and `--days`.
+Adjust `from`/`to` to match partition range: `--start-date` through `--start-date + days − 1` (UTC).
 
 ---
 
@@ -207,7 +212,7 @@ homer-core ducklake compaction --compaction-recover -c homer.json
 |---------|-----|
 | `failed to load ducklake extension` | Run `homer-core --install-extensions` |
 | `database is locked` | Stop homer-core; only one process per `catalog_path` |
-| Search returns 0 rows | Check `date` range covers `--start-date` … `--start-date + days` |
+| Search returns 0 rows | UI time range must cover `--start-date` … `--start-date + days − 1` (UTC); today is excluded by default |
 | Search returns 0 for seed Call-ID | Increase `--seed-call-ratio` or verify `--seed-call-id` |
 | `No files found` in UI but parquet exists | You used raw mode without `register` — use `--catalog` or `register` |
 | OOM during **generate** | Lower `--target-gb`, `--rows-per-file`, or `--files-per-day`; ensure free RAM |
@@ -266,11 +271,18 @@ Run generator on the **host** (or a one-off container with the same mounts) whil
 ## Quick reference
 
 ```bash
+# Version
+make version
+# homer-data-generator -v
+
 # Setup
 go run . init-catalog --catalog PATH --data-path PATH
 
-# Generate (Homer-ready)
+# Generate (Homer-ready; dates: today−days … yesterday UTC)
 go run . generate --catalog PATH --data-path PATH --target-gb 80 --days 14
+
+# Include today in the window
+go run . generate ... --days 14 --start-date $(date -u -d '13 days ago' +%Y-%m-%d)
 
 # Compaction
 go run . compact --catalog PATH --data-path PATH

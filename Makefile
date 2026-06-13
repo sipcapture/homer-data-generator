@@ -12,7 +12,16 @@ BIN_DIR     := bin
 
 GO          ?= go
 GOFLAGS     ?=
-LDFLAGS     ?=
+
+VERSION     ?= $(shell grep 'VERSION_APPLICATION = ' version.go | head -1 | cut -d'"' -f2)
+BUILD_DATE  ?= $(shell date -u +%Y-%m-%d)
+BUILD_TIME  ?= $(shell date -u +%H:%M:%S)
+GIT_COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+LDFLAGS     ?= -s -w \
+	-X main.VERSION_APPLICATION=$(VERSION) \
+	-X main.BuildDate=$(BUILD_DATE) \
+	-X main.BuildTime=$(BUILD_TIME) \
+	-X main.GitCommit=$(GIT_COMMIT)
 
 # Default paths for generate targets (override: make generate CATALOG=/path …)
 CATALOG     ?= /data/homer/homer_catalog.sqlite
@@ -29,7 +38,7 @@ SMOKE_DATA    ?= /tmp/homer/parquet
 SMOKE_GB      ?= 0.05
 
 .PHONY: all build install test test-race vet fmt tidy clean smoke \
-	init-catalog generate compact help
+	init-catalog generate compact version help
 
 all: build
 
@@ -109,6 +118,10 @@ smoke: build
 	@echo "--- smoke output ---"
 	@find "$(SMOKE_DATA)" -name 'ducklake-*.parquet' | head -3
 	@du -sh "$(SMOKE_DATA)" "$(SMOKE_CATALOG)"
+
+## version: print application version (same as -v)
+version: build
+	@$(BIN_DIR)/$(BINARY) -v
 
 ## help: show targets
 help:

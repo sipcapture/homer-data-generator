@@ -38,7 +38,8 @@ In **`--catalog` mode** (recommended), both layers are written in one pass. In l
 
 ```text
 homer-data-generator/
-├── main.go                 # CLI: init-catalog, generate, compact, register
+├── main.go                 # CLI: -v, init-catalog, generate, compact, register
+├── version.go              # VERSION_APPLICATION, build metadata (ldflags)
 ├── internal/
 │   ├── schema/
 │   │   └── call.go         # hep_proto_1_call column DDL (mirrors homer-core)
@@ -114,6 +115,15 @@ parquet/main/hep_proto_1_call/date=2026-06-01/ducklake-….parquet
 parquet/main/hep_proto_1_call/date=2026-06-02/ducklake-….parquet
 …
 ```
+
+**Default date window** (`--days N`, no `--start-date`):
+
+```text
+start_date = today_utc_midnight − N days
+partitions = start_date, start_date+1, …, start_date+(N−1)
+```
+
+So with `--days 14` on `2026-06-13` UTC, partitions are `2026-05-30` … `2026-06-12` — **today is not included**. Set `--start-date YYYY-MM-DD` to fix the first partition explicitly.
 
 Homer’s node rewrites searches into `UNION ALL` across lake parquet **and** in-memory buffer tables (`mem_hep_proto_1_call_a/b`). With homer-core stopped during generation, only lake files exist — which is fine for cold-storage load tests.
 
