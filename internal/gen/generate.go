@@ -34,7 +34,8 @@ type Options struct {
 	MemoryLimit    string
 	TempDirectory  string
 	Threads        int
-	ReopenEvery    int // close+reopen DuckDB every N batches (0 = once per day)
+	ReopenEvery    int // close+reopen DuckDB every N batches (0 = auto)
+	MaxBatchMB     int // max INSERT batch staging RAM (0 = 1536)
 }
 
 // Result summarizes a generate run.
@@ -65,7 +66,8 @@ func Generate(opts Options) (Result, error) {
 	}
 	if opts.PayloadBytes <= 0 {
 		beforeRows, beforeFiles := opts.RowsPerFile, opts.FilesPerDay
-		opts.tuneBatchSize(payloadBytes, 256<<20)
+		maxBatch := int64(opts.maxBatchBytes())
+		opts.tuneBatchSize(payloadBytes, maxBatch)
 		if opts.RowsPerFile != beforeRows || opts.FilesPerDay != beforeFiles {
 			fmt.Printf("Batch tuning: rows-per-file %d→%d, files-per-day %d→%d (large compressible payload)\n",
 				beforeRows, opts.RowsPerFile, beforeFiles, opts.FilesPerDay)
@@ -148,12 +150,14 @@ func generateRawParquet(opts Options, payloadBytes int) (Result, error) {
 }
 
 type batchRunner struct {
-	db           *sql.DB
-	lake         *Lake
-	opts         Options
-	payloadBytes int
-	staging      string
-	ducklakeMode bool
+	db            *sql.DB
+	lake          *Lake
+	opts          Options
+	payloadBytes  int
+	staging       string
+	ducklakeMode  bool
+	baselineFiles int
+	baselineBytes int64
 }
 
 func (br *batchRunner) reopenIfNeeded(fileIdx, totalFiles int) error {
@@ -163,6 +167,9 @@ func (br *batchRunner) reopenIfNeeded(fileIdx, totalFiles int) error {
 	every := br.opts.ReopenEvery
 	if every <= 0 {
 		every = br.opts.FilesPerDay
+		if every > 200 {
+			every = 200 // cap: reopening 6370 batches daily is too chatty
+		}
 	}
 	if fileIdx%every != 0 || fileIdx >= totalFiles {
 		return nil
@@ -199,8 +206,22 @@ func (br *batchRunner) run() (Result, error) {
 	if br.opts.RepeatXPayload {
 		fmt.Println("WARNING: --repeat-x-payload compresses to a few GiB; use default payload for --target-gb 80")
 	}
-	fmt.Printf("             target ~%.1f GiB parquet on disk (%d rows, %d batches)\n",
-		br.opts.TargetGB, totalRows, totalFiles)
+	fmt.Printf("             target ~%.1f GiB parquet on disk (%d rows, %d batches, %d rows/batch)\n",
+		br.opts.TargetGB, totalRows, totalFiles, br.opts.RowsPerFile)
+
+	if br.ducklakeMode {
+		if files, bytes, err := br.lake.CatalogParquetStats(); err == nil {
+			br.baselineFiles, br.baselineBytes = files, bytes
+			if files > 0 {
+				fmt.Printf("WARNING: catalog already has %d files (%.2f GiB); progress shows this run only\n",
+					files, float64(bytes)/(1<<30))
+			}
+		}
+		if orphans, ob, err := br.lake.OrphanParquetStats(); err == nil && orphans > 0 {
+			fmt.Printf("WARNING: %d orphan parquet files on disk (%.2f GiB) not in catalog — wipe data-path for a clean run\n",
+				orphans, float64(ob)/(1<<30))
+		}
+	}
 
 	fileIdx := 0
 	for day := 0; day < br.opts.Days; day++ {
@@ -272,9 +293,18 @@ func (br *batchRunner) run() (Result, error) {
 			if fileIdx%10 == 0 || fileIdx == totalFiles {
 				pct := float64(fileIdx) / float64(totalFiles) * 100
 				if br.ducklakeMode {
-					files, bytes, _ := br.lake.ParquetStats()
-					fmt.Printf("  [%5.1f%%] %d/%d batches  %d ducklake files  %.2f GiB\n",
-						pct, fileIdx, totalFiles, files, float64(bytes)/(1<<30))
+					files, bytes, _ := br.lake.CatalogParquetStats()
+					runBytes := bytes - br.baselineBytes
+					if runBytes < 0 {
+						runBytes = 0
+					}
+					runFiles := files - br.baselineFiles
+					if runFiles < 0 {
+						runFiles = 0
+					}
+					fmt.Printf("  [%5.1f%%] %d/%d batches  +%d files  run %5.2f GiB  total %5.2f GiB\n",
+						pct, fileIdx, totalFiles, runFiles,
+						float64(runBytes)/(1<<30), float64(bytes)/(1<<30))
 				} else {
 					fmt.Printf("  [%5.1f%%] %d/%d files  %.2f GiB\n",
 						pct, fileIdx, totalFiles, float64(res.BytesWritten)/(1<<30))
@@ -295,12 +325,19 @@ func (br *batchRunner) run() (Result, error) {
 				return res, fmt.Errorf("merge_adjacent_files: %w", err)
 			}
 		}
-		files, bytes, err := br.lake.ParquetStats()
+		files, bytes, err := br.lake.CatalogParquetStats()
 		if err != nil {
 			return res, err
 		}
-		res.FilesWritten = files
-		res.BytesWritten = bytes
+		res.FilesWritten = files - br.baselineFiles
+		if res.FilesWritten < 0 {
+			res.FilesWritten = files
+		}
+		runBytes := bytes - br.baselineBytes
+		if runBytes < 0 {
+			runBytes = bytes
+		}
+		res.BytesWritten = runBytes
 		if res.RowsWritten == 0 {
 			res.RowsWritten, _ = br.lake.RowCount()
 		}
@@ -325,6 +362,14 @@ func (o *Options) applyDefaults() {
 		o.StartDate = time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -o.Days)
 	}
 	// CompressiblePayload defaults to true (zero value is false — set explicitly in main).
+}
+
+func (o Options) maxBatchBytes() int64 {
+	mb := o.MaxBatchMB
+	if mb <= 0 {
+		mb = 1536
+	}
+	return int64(mb) << 20
 }
 
 func (o Options) validate() error {

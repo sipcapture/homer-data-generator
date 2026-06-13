@@ -23,7 +23,7 @@ func TestAutoPayloadBytes_tuneBatchSize(t *testing.T) {
 	before := o.Days * o.FilesPerDay * o.RowsPerFile
 	o.tuneBatchSize(p, 256<<20)
 	after := o.Days * o.FilesPerDay * o.RowsPerFile
-	if o.RowsPerFile > 25000 {
+	if o.RowsPerFile > 8000 {
 		t.Fatalf("rows-per-file = %d, expected reduction for large payload", o.RowsPerFile)
 	}
 	if after < before-50000 || after > before+50000 {

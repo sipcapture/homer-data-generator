@@ -66,6 +66,9 @@ PARQUET=$DATA/parquet
 # Stop homer-core if it uses the same paths
 sudo systemctl stop homer-core   # or docker compose stop homer
 
+# Wipe previous runs (orphan parquet confuses progress and wastes disk)
+sudo rm -rf "$PARQUET" "$CATALOG"
+
 ./bin/homer-data-generator init-catalog \
   --catalog "$CATALOG" \
   --data-path "$PARQUET"

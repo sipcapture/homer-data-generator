@@ -68,7 +68,8 @@ func runGenerate(args []string) int {
 	memoryLimit := fs.String("memory-limit", "", "DuckDB memory_limit (default: 8GB)")
 	tempDir := fs.String("temp-directory", "", "DuckDB spill dir (default: <catalog_dir>/.duckdb_spill)")
 	threads := fs.Int("threads", 0, "DuckDB threads (default: 4)")
-	reopenEvery := fs.Int("reopen-every", 0, "close/reopen DuckDB every N batches (0 = once per day)")
+	reopenEvery := fs.Int("reopen-every", 0, "close/reopen DuckDB every N batches (0 = auto, max 200)")
+	maxBatchMB := fs.Int("max-batch-mb", 1536, "max RAM per INSERT batch (auto-tunes rows-per-file)")
 	table := fs.String("table", schema.CallTable, "table name")
 	_ = fs.Parse(args)
 
@@ -110,6 +111,7 @@ func runGenerate(args []string) int {
 		TempDirectory:  *tempDir,
 		Threads:        *threads,
 		ReopenEvery:    *reopenEvery,
+		MaxBatchMB:     *maxBatchMB,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "generate failed: %v\n", err)

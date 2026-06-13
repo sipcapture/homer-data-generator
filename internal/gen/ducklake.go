@@ -209,7 +209,7 @@ func (l *Lake) MergeAdjacent(maxCompactedFiles int) error {
 	return err
 }
 
-// ParquetStats walks the data path and sums ducklake-*.parquet sizes.
+// ParquetStats walks the data path and sums ducklake-*.parquet sizes (includes orphans).
 func (l *Lake) ParquetStats() (files int, bytes int64, err error) {
 	root := filepath.Join(l.cfg.DataPath, "main", l.cfg.Table)
 	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
@@ -223,6 +223,90 @@ func (l *Lake) ParquetStats() (files int, bytes int64, err error) {
 			files++
 			bytes += info.Size()
 		}
+		return nil
+	})
+	return files, bytes, err
+}
+
+func catalogPathToAbs(dataPath, tableName, catalogPath string) string {
+	if filepath.IsAbs(catalogPath) {
+		return catalogPath
+	}
+	if strings.HasPrefix(catalogPath, "main/") {
+		return filepath.Join(dataPath, catalogPath)
+	}
+	return filepath.Join(dataPath, "main", tableName, catalogPath)
+}
+
+// CatalogParquetStats sums on-disk sizes for parquet files registered in the catalog.
+func (l *Lake) CatalogParquetStats() (files int, bytes int64, err error) {
+	meta := fmt.Sprintf("__ducklake_metadata_%s", l.cfg.LakeName)
+	rows, err := l.db.Query(fmt.Sprintf(`
+		SELECT t.table_name, f.path
+		FROM %s.ducklake_data_file f
+		JOIN %s.ducklake_table t ON t.table_id = f.table_id
+		WHERE f.end_snapshot IS NULL AND t.table_name = ?`,
+		meta, meta), l.cfg.Table)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tableName, relPath string
+		if err := rows.Scan(&tableName, &relPath); err != nil {
+			return files, bytes, err
+		}
+		abs := catalogPathToAbs(l.cfg.DataPath, tableName, relPath)
+		fi, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+		files++
+		bytes += fi.Size()
+	}
+	return files, bytes, rows.Err()
+}
+
+// OrphanParquetStats counts ducklake-*.parquet on disk that are not in the catalog.
+func (l *Lake) OrphanParquetStats() (files int, bytes int64, err error) {
+	inCatalog := make(map[string]struct{})
+	meta := fmt.Sprintf("__ducklake_metadata_%s", l.cfg.LakeName)
+	rows, err := l.db.Query(fmt.Sprintf(`
+		SELECT t.table_name, f.path
+		FROM %s.ducklake_data_file f
+		JOIN %s.ducklake_table t ON t.table_id = f.table_id
+		WHERE f.end_snapshot IS NULL AND t.table_name = ?`,
+		meta, meta), l.cfg.Table)
+	if err != nil {
+		return 0, 0, err
+	}
+	for rows.Next() {
+		var tableName, relPath string
+		if err := rows.Scan(&tableName, &relPath); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		inCatalog[catalogPathToAbs(l.cfg.DataPath, tableName, relPath)] = struct{}{}
+	}
+	rows.Close()
+
+	root := filepath.Join(l.cfg.DataPath, "main", l.cfg.Table)
+	err = filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(info.Name(), ".parquet") || !strings.HasPrefix(info.Name(), "ducklake-") {
+			return nil
+		}
+		if _, ok := inCatalog[path]; ok {
+			return nil
+		}
+		files++
+		bytes += info.Size()
 		return nil
 	})
 	return files, bytes, err
