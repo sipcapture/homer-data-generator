@@ -95,7 +95,8 @@ Search repro: default **0.1%** of rows use Call-ID
 |------|---------|-------------|
 | `--catalog` | — | **Required for Homer.** DuckLake sqlite path |
 | `--data-path` | `/data/homer/parquet` | Parquet root |
-| `--target-gb` | `80` | Approximate total size |
+| `--target-gb` | `80` | Approximate **parquet on disk** size (Snappy) |
+| `--compressible-payload` | `false` | Fast `repeat('X')` — **do not use** if you need real `--target-gb` volume |
 | `--days` | `14` | Number of `date=` partitions (see below) |
 | `--start-date` | auto | First partition `YYYY-MM-DD` (default: today UTC − `--days`) |
 | `--rows-per-file` | `25000` | Rows per insert batch |

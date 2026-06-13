@@ -140,7 +140,7 @@ Rows are built entirely in **DuckDB SQL** (`generate_series` + expressions) for 
 | `caller`, `callee` | `userN` / `peerN` |
 | `src_ip`, `dst_ip` | pseudo-random `10.x.x.x` |
 | `method`, `response_code`, `cseq_method` | rotated SIP methods / responses |
-| `payload` | `repeat('X', N)` — `N` auto-sized from `--target-gb` |
+| `payload` | md5 chunk string (`--target-gb` sized); `--compressible-payload` uses `repeat('X')` (Snappy shrinks to ~2 GiB for 80G target) |
 | `data_extra` | JSON metadata |
 
 Default **seed Call-ID** (`9b9558fa657d11f1aba1000c29796214@91.102.10.105`) matches the production OOM repro pattern (14-day range + `LIKE '%call_id%'`).

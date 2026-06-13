@@ -58,6 +58,7 @@ func runGenerate(args []string) int {
 	rowsPerFile := fs.Int("rows-per-file", 25000, "rows per insert batch (≈ one parquet file after flush)")
 	filesPerDay := fs.Int("files-per-day", 32, "batches per day partition")
 	payloadBytes := fs.Int("payload-bytes", 0, "SIP payload size (0 = auto from target-gb)")
+	compressible := fs.Bool("compressible-payload", false, "repeat('X') payload (fast; --target-gb will NOT match parquet size)")
 	startDate := fs.String("start-date", "", "first partition YYYY-MM-DD (default: today-days UTC)")
 	seedCallID := fs.String("seed-call-id", "9b9558fa657d11f1aba1000c29796214@91.102.10.105", "Call-ID for search repro rows")
 	seedRatio := fs.Float64("seed-call-ratio", 0.001, "fraction of rows with seed-call-id")
@@ -95,7 +96,8 @@ func runGenerate(args []string) int {
 		TargetGB:       *targetGB,
 		RowsPerFile:    *rowsPerFile,
 		FilesPerDay:    *filesPerDay,
-		PayloadBytes:   *payloadBytes,
+		PayloadBytes:        *payloadBytes,
+		CompressiblePayload: *compressible,
 		StartDate:      start,
 		SeedCallID:     *seedCallID,
 		SeedCallRatio:  *seedRatio,

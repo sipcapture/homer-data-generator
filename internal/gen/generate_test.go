@@ -37,6 +37,13 @@ func TestGenerate_ducklakeMode(t *testing.T) {
 	if res.RowsWritten < 2000 {
 		t.Fatalf("rows: got %d want >= 2000", res.RowsWritten)
 	}
+	// 0.01 GiB target must land well above compressible repeat('X') (~few MiB).
+	wantMinF := float64(1<<30) * 0.01 * 0.3 // md5 hex still Snappy-compresses slightly
+	wantMin := int64(wantMinF)
+	if res.BytesWritten < wantMin {
+		t.Fatalf("on-disk bytes %d below 40%% of target (%d); payload may be too compressible",
+			res.BytesWritten, wantMin)
+	}
 
 	var ducklakeFiles []string
 	_ = filepath.Walk(filepath.Join(dataPath, "main"), func(path string, info os.FileInfo, err error) error {
