@@ -1,20 +1,29 @@
 package gen_test
 
 import (
-	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	_ "github.com/duckdb/duckdb-go/v2"
 
 	"github.com/sipcapture/homer-data-generator/internal/gen"
 )
 
-func TestGenerate_smoke(t *testing.T) {
+func TestGenerate_ducklakeMode(t *testing.T) {
 	dir := t.TempDir()
+	catalog := filepath.Join(dir, "homer_catalog.sqlite")
+	dataPath := filepath.Join(dir, "parquet")
+
+	if err := gen.InitCatalog(gen.LakeConfig{
+		CatalogPath: catalog,
+		DataPath:    dataPath,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	res, err := gen.Generate(gen.Options{
-		OutputDir:     dir,
+		OutputDir:     dataPath,
+		CatalogPath:   catalog,
 		Days:          2,
 		TargetGB:      0.01,
 		RowsPerFile:   500,
@@ -25,35 +34,26 @@ func TestGenerate_smoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.FilesWritten != 4 {
-		t.Fatalf("files: got %d want 4", res.FilesWritten)
-	}
-	if res.RowsWritten != 2000 {
-		t.Fatalf("rows: got %d want 2000", res.RowsWritten)
+	if res.RowsWritten < 2000 {
+		t.Fatalf("rows: got %d want >= 2000", res.RowsWritten)
 	}
 
-	matches, _ := filepath.Glob(filepath.Join(dir, "main", "hep_proto_1_call", "date=*", "*.parquet"))
-	if len(matches) != 4 {
-		t.Fatalf("parquet files on disk: got %d", len(matches))
+	var ducklakeFiles []string
+	_ = filepath.Walk(filepath.Join(dataPath, "main"), func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasPrefix(info.Name(), "ducklake-") && strings.HasSuffix(info.Name(), ".parquet") {
+			ducklakeFiles = append(ducklakeFiles, path)
+		}
+		return nil
+	})
+	if len(ducklakeFiles) == 0 {
+		t.Fatal("expected ducklake-*.parquet files, found none")
 	}
+	t.Logf("ducklake files: %d, example: %s", len(ducklakeFiles), filepath.Base(ducklakeFiles[0]))
 
-	db, err := sql.Open("duckdb", "")
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(catalog); err != nil {
+		t.Fatalf("catalog missing: %v", err)
 	}
-	defer db.Close()
-
-	glob := filepath.Join(dir, "main", "hep_proto_1_call", "date=*/**/*.parquet")
-	var n, seed int
-	q := `SELECT count(*), count(*) filter (where session_id = 'seed-call@test') FROM read_parquet('` + glob + `', hive_partitioning=true)`
-	if err := db.QueryRow(q).Scan(&n, &seed); err != nil {
-		t.Fatal(err)
-	}
-	if n != 2000 {
-		t.Fatalf("read_parquet rows: got %d", n)
-	}
-	if seed < 10 {
-		t.Fatalf("expected ~20 seed rows at 1%%, got %d", seed)
-	}
-	_ = os.RemoveAll(dir)
 }

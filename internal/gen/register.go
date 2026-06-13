@@ -12,7 +12,11 @@ import (
 	"github.com/sipcapture/homer-data-generator/internal/schema"
 )
 
-// RegisterOptions imports on-disk parquet into an existing DuckLake catalog.
+// Register imports legacy raw parquet (data_NNNNN.parquet from generate without
+// --catalog) into an existing DuckLake catalog.
+//
+// When you generate with --catalog, DuckLake updates catalog.sqlite automatically;
+// this command is NOT needed.
 type RegisterOptions struct {
 	CatalogPath string
 	DataPath    string
