@@ -16,10 +16,17 @@ Writes real DuckLake artifacts — the same layout Homer produces after flush/co
 
 **Docs:** [Architecture](docs/ARCHITECTURE.md) · [HOWTO](docs/HOWTO.md)
 
+```bash
+make build          # bin/homer-data-generator
+make smoke          # quick ~50 MiB test in /tmp
+make help           # all targets
+```
+
 ## Requirements
 
 - Go 1.22+, CGO
 - DuckLake extensions: `homer-core --install-extensions` (once)
+- `make` (optional — `make help`)
 
 ## Quick start (Homer-compatible)
 
