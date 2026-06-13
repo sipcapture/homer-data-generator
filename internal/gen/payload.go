@@ -6,9 +6,9 @@ import (
 )
 
 // Parquet Snappy calibration for the default payload (per-row md5, repeated to length).
-// Measured: 4769-byte payload, 2000 rows → ~1.8 KiB/row on disk → ~0.38 disk/raw.
+// Measured on DuckLake flush: 20052-byte payload → ~1.0 KiB/row on disk (~0.05 disk/raw).
 const (
-	snappyPayloadDiskRatio    = 0.38
+	snappyPayloadDiskRatio     = 0.05
 	compressedRowOverheadBytes = 50.0
 
 	// repeat('X') compresses far more (~52:1); only for --repeat-x-payload smoke runs.

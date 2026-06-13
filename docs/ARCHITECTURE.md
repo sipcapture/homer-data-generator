@@ -155,7 +155,7 @@ total_rows = days × files_per_day × rows_per_file
 --target-gb = parquet size on disk (GiB, Snappy)
 
 compressible (default, per-row md5):
-  payload_len ≈ (target_bytes − rows×overhead) / (rows × 0.38)
+  payload_len ≈ (target_bytes − rows×overhead) / (rows × 0.05)
 ```
 
 Defaults (`14` days, `32` files/day, `25000` rows/file, `80` GiB) yield many small files — similar to a busy node before compaction — which stress DuckDB memory during merge and long-range scan.

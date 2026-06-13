@@ -8,9 +8,9 @@ func TestAutoPayloadBytes_80GiBProfile_compressible(t *testing.T) {
 		CompressiblePayload: true,
 	}
 	got := o.autoPayloadBytes()
-	// ~19k per-row md5-repeat → ~80 GiB Snappy parquet on disk
-	if got < 15_000 || got > 30_000 {
-		t.Fatalf("payload bytes = %d, want ~18800 for 80 GiB compressed on disk", got)
+	// ~141k per-row md5-repeat → ~80 GiB Snappy parquet on disk
+	if got < 120_000 || got > 170_000 {
+		t.Fatalf("payload bytes = %d, want ~141000 for 80 GiB compressed on disk", got)
 	}
 }
 
