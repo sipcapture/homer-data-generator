@@ -3,7 +3,6 @@ package gen
 import (
 	"database/sql"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,7 +23,8 @@ type Options struct {
 	RowsPerFile   int
 	FilesPerDay   int
 	PayloadBytes  int // 0 = auto from TargetGB
-	CompressiblePayload bool // repeat('X') — fast but Snappy shrinks target-gb (do not use for size tests)
+	CompressiblePayload bool // default true: Snappy-friendly payload sized for --target-gb on disk
+	RepeatXPayload      bool // repeat('X') only — tiny on disk, smoke tests
 	StartDate     time.Time
 	SeedCallID    string
 	SeedCallRatio float64
@@ -62,6 +62,14 @@ func Generate(opts Options) (Result, error) {
 	payloadBytes := opts.PayloadBytes
 	if payloadBytes <= 0 {
 		payloadBytes = opts.autoPayloadBytes()
+	}
+	if opts.PayloadBytes <= 0 {
+		beforeRows, beforeFiles := opts.RowsPerFile, opts.FilesPerDay
+		opts.tuneBatchSize(payloadBytes, 256<<20)
+		if opts.RowsPerFile != beforeRows || opts.FilesPerDay != beforeFiles {
+			fmt.Printf("Batch tuning: rows-per-file %d→%d, files-per-day %d→%d (large compressible payload)\n",
+				beforeRows, opts.RowsPerFile, beforeFiles, opts.FilesPerDay)
+		}
 	}
 
 	if opts.CatalogPath != "" {
@@ -187,13 +195,12 @@ func (br *batchRunner) run() (Result, error) {
 		fmt.Printf("Catalog:   %s\n", br.opts.CatalogPath)
 	}
 	totalRows := int64(br.opts.Days * br.opts.FilesPerDay * br.opts.RowsPerFile)
-	fmt.Printf("Payload:     %d bytes/row (%s)\n", br.payloadBytes, payloadModeLabel(br.opts.CompressiblePayload))
-	if br.opts.CompressiblePayload {
-		fmt.Println("WARNING: --compressible-payload — Snappy compresses repeat('X'); --target-gb will NOT match parquet size")
-	} else {
-		fmt.Printf("             expect ~%.1f GiB on disk (parquet, Snappy on random-ish payload)\n",
-			float64(br.payloadBytes)*float64(totalRows)/(1<<30))
+	fmt.Printf("Payload:     %d bytes/row (%s)\n", br.payloadBytes, payloadModeLabel(br.opts))
+	if br.opts.RepeatXPayload {
+		fmt.Println("WARNING: --repeat-x-payload compresses to a few GiB; use default payload for --target-gb 80")
 	}
+	fmt.Printf("             target ~%.1f GiB parquet on disk (%d rows, %d batches)\n",
+		br.opts.TargetGB, totalRows, totalFiles)
 
 	fileIdx := 0
 	for day := 0; day < br.opts.Days; day++ {
@@ -210,16 +217,16 @@ func (br *batchRunner) run() (Result, error) {
 			seedOffset := fileIdx * br.opts.RowsPerFile
 
 			insertSQL := buildInsertSQL(br.staging, insertParams{
-				rows:                br.opts.RowsPerFile,
-				dateStr:             dateStr,
-				dayOffset:           day,
-				fileOffset:          seedOffset,
-				payloadBytes:        br.payloadBytes,
-				compressiblePayload: br.opts.CompressiblePayload,
-				seedCallID:          br.opts.SeedCallID,
-				seedCallRatio:       br.opts.SeedCallRatio,
-				methods:             methods,
-				respCodes:           respCodes,
+				rows:          br.opts.RowsPerFile,
+				dateStr:       dateStr,
+				dayOffset:     day,
+				fileOffset:    seedOffset,
+				payloadBytes:  br.payloadBytes,
+				opts:          br.opts,
+				seedCallID:    br.opts.SeedCallID,
+				seedCallRatio: br.opts.SeedCallRatio,
+				methods:       methods,
+				respCodes:     respCodes,
 			})
 
 			if _, err := br.db.Exec(fmt.Sprintf("DELETE FROM %s", br.staging)); err != nil {
@@ -317,6 +324,7 @@ func (o *Options) applyDefaults() {
 	if o.StartDate.IsZero() {
 		o.StartDate = time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -o.Days)
 	}
+	// CompressiblePayload defaults to true (zero value is false — set explicitly in main).
 }
 
 func (o Options) validate() error {
@@ -344,52 +352,17 @@ func (o Options) validate() error {
 	return nil
 }
 
-func (o Options) autoPayloadBytes() int {
-	totalRows := float64(o.Days * o.FilesPerDay * o.RowsPerFile)
-	targetBytes := o.TargetGB * (1 << 30)
-	const fixedBytes = 600
-	avg := targetBytes / totalRows
-	p := int(math.Round(avg - fixedBytes))
-	if p < 256 {
-		p = 256
-	}
-	return p
-}
-
 type insertParams struct {
-	rows                int
-	dateStr             string
-	dayOffset           int
-	fileOffset          int
-	payloadBytes        int
-	compressiblePayload bool
-	seedCallID          string
-	seedCallRatio       float64
-	methods             []string
-	respCodes           []string
-}
-
-func payloadModeLabel(compressible bool) string {
-	if compressible {
-		return "compressible repeat('X') — target-gb ignored for on-disk size"
-	}
-	return "md5 chunks — sized for parquet on disk"
-}
-
-// payloadColumnSQL builds a VARCHAR payload column expression.
-// Default uses per-row md5 chunks so Snappy cannot collapse --target-gb to ~2 GiB.
-func payloadColumnSQL(fileOffset, payloadLen int, compressible bool) string {
-	if compressible {
-		return fmt.Sprintf("repeat('X', %d) AS payload", payloadLen)
-	}
-	if payloadLen <= 0 {
-		return "''::VARCHAR AS payload"
-	}
-	chunks := (payloadLen / 32) + 1
-	return fmt.Sprintf(
-		`substr((SELECT string_agg(md5((i + %d + s.v)::VARCHAR), '') FROM generate_series(0, %d) AS s(v)), 1, %d) AS payload`,
-		fileOffset, chunks, payloadLen,
-	)
+	rows          int
+	dateStr       string
+	dayOffset     int
+	fileOffset    int
+	payloadBytes  int
+	opts          Options
+	seedCallID    string
+	seedCallRatio float64
+	methods       []string
+	respCodes     []string
 }
 
 func buildInsertSQL(staging string, p insertParams) string {
@@ -398,7 +371,7 @@ func buildInsertSQL(staging string, p insertParams) string {
 	methodN := len(p.methods)
 	respN := len(p.respCodes)
 	seed := escapeSQLString(p.seedCallID)
-	payloadCol := payloadColumnSQL(p.fileOffset, p.payloadBytes, p.compressiblePayload)
+	payloadCol := payloadColumnSQL(p.fileOffset, p.payloadBytes, p.opts)
 
 	return fmt.Sprintf(`
 INSERT INTO %s

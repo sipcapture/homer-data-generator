@@ -140,7 +140,8 @@ Rows are built entirely in **DuckDB SQL** (`generate_series` + expressions) for 
 | `caller`, `callee` | `userN` / `peerN` |
 | `src_ip`, `dst_ip` | pseudo-random `10.x.x.x` |
 | `method`, `response_code`, `cseq_method` | rotated SIP methods / responses |
-| `payload` | md5 chunk string (`--target-gb` sized); `--compressible-payload` uses `repeat('X')` (Snappy shrinks to ~2 GiB for 80G target) |
+| `payload` | per-row md5 (Snappy-compressible); `--target-gb` = **parquet on disk** |
+| `--repeat-x-payload` | `repeat('X')` — fast smoke, only ~2 GiB on disk for target 80 |
 | `data_extra` | JSON metadata |
 
 Default **seed Call-ID** (`9b9558fa657d11f1aba1000c29796214@91.102.10.105`) matches the production OOM repro pattern (14-day range + `LIKE '%call_id%'`).
@@ -151,7 +152,10 @@ Total volume is approximate:
 
 ```text
 total_rows = days × files_per_day × rows_per_file
-payload_bytes ≈ (target_gb × 2³⁰) / total_rows − fixed_overhead
+--target-gb = parquet size on disk (GiB, Snappy)
+
+compressible (default, per-row md5):
+  payload_len ≈ (target_bytes − rows×overhead) / (rows × 0.38)
 ```
 
 Defaults (`14` days, `32` files/day, `25000` rows/file, `80` GiB) yield many small files — similar to a busy node before compaction — which stress DuckDB memory during merge and long-range scan.

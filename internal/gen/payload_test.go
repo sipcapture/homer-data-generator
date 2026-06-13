@@ -2,24 +2,52 @@ package gen
 
 import "testing"
 
-func TestAutoPayloadBytes_80GiBProfile(t *testing.T) {
-	o := Options{Days: 14, FilesPerDay: 32, RowsPerFile: 25000, TargetGB: 80}
+func TestAutoPayloadBytes_80GiBProfile_compressible(t *testing.T) {
+	o := Options{
+		Days: 14, FilesPerDay: 32, RowsPerFile: 25000, TargetGB: 80,
+		CompressiblePayload: true,
+	}
 	got := o.autoPayloadBytes()
-	if got < 6000 {
-		t.Fatalf("payload bytes = %d, want ~7000 for 80 GiB / 11.2M rows", got)
+	// ~19k per-row md5-repeat → ~80 GiB Snappy parquet on disk
+	if got < 15_000 || got > 30_000 {
+		t.Fatalf("payload bytes = %d, want ~18800 for 80 GiB compressed on disk", got)
 	}
 }
 
-func TestPayloadColumnSQL_compressible(t *testing.T) {
-	s := payloadColumnSQL(100, 500, true)
-	if s != "repeat('X', 500) AS payload" {
-		t.Fatalf("unexpected: %s", s)
+func TestAutoPayloadBytes_tuneBatchSize(t *testing.T) {
+	o := Options{
+		Days: 14, FilesPerDay: 32, RowsPerFile: 25000, TargetGB: 80,
+		CompressiblePayload: true,
+	}
+	p := o.autoPayloadBytes()
+	before := o.Days * o.FilesPerDay * o.RowsPerFile
+	o.tuneBatchSize(p, 256<<20)
+	after := o.Days * o.FilesPerDay * o.RowsPerFile
+	if o.RowsPerFile > 25000 {
+		t.Fatalf("rows-per-file = %d, expected reduction for large payload", o.RowsPerFile)
+	}
+	if after < before-50000 || after > before+50000 {
+		t.Fatalf("row count drift: before=%d after=%d", before, after)
 	}
 }
 
-func TestPayloadColumnSQL_sized(t *testing.T) {
-	s := payloadColumnSQL(100, 500, false)
+func TestPayloadColumnSQL_default(t *testing.T) {
+	s := payloadColumnSQL(100, 500, Options{CompressiblePayload: true})
 	if s == "" || s == "repeat('X', 500) AS payload" {
-		t.Fatalf("expected md5-based payload, got: %s", s)
+		t.Fatalf("expected per-row md5 payload, got: %s", s)
+	}
+}
+
+func TestEstimateDiskSize_80GiB(t *testing.T) {
+	o := Options{
+		Days: 14, FilesPerDay: 32, RowsPerFile: 25000, TargetGB: 80,
+		CompressiblePayload: true,
+	}
+	p := o.autoPayloadBytes()
+	rows := float64(o.Days * o.FilesPerDay * o.RowsPerFile)
+	est := rows * (compressedRowOverheadBytes + float64(p)*snappyPayloadDiskRatio)
+	want := 80.0 * (1 << 30)
+	if est < want*0.85 || est > want*1.15 {
+		t.Fatalf("estimated disk %0.2f GiB, want ~80 GiB (payload=%d)", est/(1<<30), p)
 	}
 }
